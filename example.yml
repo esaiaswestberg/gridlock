@@ -1,0 +1,48 @@
+# Define a TMUX session
+session:
+  # Name of the session
+  name: "example-001"
+
+  # Working directory for the session (optional)
+  working-directory: "/home/example/gridlock"
+
+  windows:
+    - name: "example-001-window-001"
+      panes:
+        - name: "example-001-window-001-pane-001"
+          working-directory: "/home/example/gridlock/backend" # Working directory for the pane (optional)
+          command: "echo example-001-window-001-pane-001"
+        - name: "example-001-window-001-pane-002"
+          command: "echo example-001-window-001-pane-002"
+        - name: "example-001-window-001-pane-003"
+          command: "echo example-001-window-001-pane-003"
+
+      layout:
+        columns:
+          - rows:
+              - "example-001-window-001-column-001-pane-001"
+          - rows:
+              - "example-001-window-001-column-002-pane-001"
+              - "example-001-window-001-column-002-pane-002"
+
+    - name: "example-001-window-002"
+      working-directory: "/home/example/gridlock/frontend" # Working directory for the window (optional)
+      panes:
+        - name: "example-001-window-002-pane-001"
+          command: "echo example-001-window-002-pane-001"
+        - name: "example-001-window-002-pane-002"
+          command: "echo example-001-window-002-pane-002"
+        - name: "example-001-window-002-pane-003"
+          command: "echo example-001-window-002-pane-003"
+        - name: "example-001-window-002-pane-004"
+          command: "echo example-001-window-002-pane-004"
+
+      layout:
+        rows:
+          - columns:
+              - "example-001-window-002-row-001-pane-001"
+          - columns:
+              - "example-001-window-002-row-002-pane-002"
+              - columns:
+                  - "example-001-window-002-row-002-pane-003"
+                  - "example-001-window-002-row-002-pane-004"
