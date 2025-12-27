@@ -195,7 +195,7 @@ func main() {
 		for i := range config.Session.Windows {
 			window := &config.Session.Windows[i]
 			if i > 0 {
-				windowArgs := []string{"new-window", "-t", sessionName, "-n", window.Name}
+				windowArgs := []string{"new-window", "-d", "-t", sessionName, "-n", window.Name}
 				if window.WorkingDirectory != "" {
 					windowArgs = append(windowArgs, "-c", window.WorkingDirectory)
 				} else if config.Session.WorkingDirectory != "" {
