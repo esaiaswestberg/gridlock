@@ -53,3 +53,26 @@ changelog:
     exclude:
       - '^docs:'
       - '^test:'
+
+aurs:
+  - name: gridlock-bin
+    homepage: "https://github.com/esaiaswestberg/gridlock"
+    description: "A powerful TMUX session manager and automator"
+    maintainers:
+      - "Esaias Westberg <esaias@westbergs.se>"
+    license: "MIT"
+    private_key: '{{ .Env.AUR_KEY }}'
+    git_url: 'ssh://aur@aur.archlinux.org/gridlock-bin.git'
+    depends:
+      - tmux
+    provides:
+      - gridlock
+    conflicts:
+      - gridlock
+    package: |-
+      # bin
+      install -Dm755 "./gridlock" "${pkgdir}/usr/bin/gridlock"
+      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/gridlock-bin/LICENSE"
+      install -Dm644 "./README.md" "${pkgdir}/usr/share/doc/gridlock-bin/README.md"
+      install -Dm644 "./.gridlock.example.yaml" "${pkgdir}/usr/share/doc/gridlock-bin/examples/.gridlock.example.yaml"
+
