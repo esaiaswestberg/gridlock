@@ -75,8 +75,8 @@ func (t *TMUX) run(args ...string) (string, error) {
 }
 
 func main() {
-	configFile := flag.String("config", "example.yml", "Path to the configuration file")
-	flag.String("f", "example.yml", "Path to the configuration file (shorthand)")
+	configFile := flag.String("config", ".gridlock.yaml", "Path to the configuration file")
+	flag.String("f", ".gridlock.yaml", "Path to the configuration file (shorthand)")
 	detached := flag.Bool("detached", false, "Do not attach to the session")
 	flag.Bool("d", false, "Do not attach to the session (shorthand)")
 	recreate := flag.Bool("recreate", false, "Kill existing session with the same name")
@@ -106,44 +106,45 @@ func main() {
 	t := &TMUX{dryRun: *dryRun}
 	sessionName := config.Session.Name
 
-	// 3. Do not do anything if there already is a session with the set name, unless --recreate
+	sessionExists := false
 	_, err = t.run("has-session", "-t", sessionName)
 	if err == nil && !*dryRun {
 		if *recreate {
 			fmt.Printf("Killing existing session: %s\n", sessionName)
 			t.run("kill-session", "-t", sessionName)
 		} else {
-			fmt.Printf("Session %s already exists. Use --recreate to restart it.\n", sessionName)
-			os.Exit(0)
+			sessionExists = true
 		}
 	}
 
-	// 1. We always create the session in the background.
-	fmt.Printf("Creating session: %s\n", sessionName)
-	newSessionArgs := []string{"new-session", "-d", "-s", sessionName}
-	if config.Session.WorkingDirectory != "" {
-		newSessionArgs = append(newSessionArgs, "-c", config.Session.WorkingDirectory)
-	}
-	if len(config.Session.Windows) > 0 {
-		newSessionArgs = append(newSessionArgs, "-n", config.Session.Windows[0].Name)
-	}
-	t.run(newSessionArgs...)
+	if !sessionExists {
+		// 1. We always create the session in the background.
+		fmt.Printf("Creating session: %s\n", sessionName)
+		newSessionArgs := []string{"new-session", "-d", "-s", sessionName}
+		if config.Session.WorkingDirectory != "" {
+			newSessionArgs = append(newSessionArgs, "-c", config.Session.WorkingDirectory)
+		}
+		if len(config.Session.Windows) > 0 {
+			newSessionArgs = append(newSessionArgs, "-n", config.Session.Windows[0].Name)
+		}
+		t.run(newSessionArgs...)
 
-	for i := range config.Session.Windows {
-		window := &config.Session.Windows[i]
-		if i > 0 {
-			windowArgs := []string{"new-window", "-t", sessionName, "-n", window.Name}
-			if window.WorkingDirectory != "" {
-				windowArgs = append(windowArgs, "-c", window.WorkingDirectory)
-			} else if config.Session.WorkingDirectory != "" {
-				windowArgs = append(windowArgs, "-c", config.Session.WorkingDirectory)
+		for i := range config.Session.Windows {
+			window := &config.Session.Windows[i]
+			if i > 0 {
+				windowArgs := []string{"new-window", "-t", sessionName, "-n", window.Name}
+				if window.WorkingDirectory != "" {
+					windowArgs = append(windowArgs, "-c", window.WorkingDirectory)
+				} else if config.Session.WorkingDirectory != "" {
+					windowArgs = append(windowArgs, "-c", config.Session.WorkingDirectory)
+				}
+				t.run(windowArgs...)
 			}
-			t.run(windowArgs...)
-		}
 
-		windowTarget := fmt.Sprintf("%s:%s", sessionName, window.Name)
-		// Apply layout recursively
-		t.applyLayout(windowTarget, 0, window.Layout, window, config.Session.WorkingDirectory)
+			windowTarget := fmt.Sprintf("%s:%s", sessionName, window.Name)
+			// Apply layout recursively
+			t.applyLayout(windowTarget, 0, window.Layout, window, config.Session.WorkingDirectory)
+		}
 	}
 
 	// 4. If we are currently in a TMUX session, we detach from the current one and attach to the new one, unless created detached.
@@ -182,34 +183,34 @@ func (t *TMUX) applyLayout(windowTarget string, paneTarget int, node LayoutNode,
 	}
 
 	if len(node.Columns) > 0 {
-		for i := 0; i < len(node.Columns)-1; i++ {
-			splitArgs := []string{"split-window", "-h", "-t", fmt.Sprintf("%s.%d", windowTarget, paneTarget)}
-			// Try to find a working dir for the first pane of the next column to use during split
+		n := len(node.Columns)
+		for i := 0; i < n-1; i++ {
+			percentage := 100 * (n - 1 - i) / (n - i)
+			splitArgs := []string{"split-window", "-h", "-p", fmt.Sprintf("%d", percentage), "-t", fmt.Sprintf("%s.%d", windowTarget, paneTarget+i)}
 			workDir := getWorkDirForNode(&node.Columns[i+1], window, sessionWorkDir)
 			if workDir != "" {
 				splitArgs = append(splitArgs, "-c", workDir)
 			}
 			t.run(splitArgs...)
 		}
-		// Reset to even layout for this window (TEMPORARY - might need more precise control)
-		t.run("select-layout", "-t", windowTarget, "even-horizontal")
-		
+
 		currentPane := paneTarget
 		for _, col := range node.Columns {
 			currentPane = t.applyLayout(windowTarget, currentPane, col, window, sessionWorkDir)
 		}
 		return currentPane
 	} else if len(node.Rows) > 0 {
-		for i := 0; i < len(node.Rows)-1; i++ {
-			splitArgs := []string{"split-window", "-v", "-t", fmt.Sprintf("%s.%d", windowTarget, paneTarget)}
+		n := len(node.Rows)
+		for i := 0; i < n-1; i++ {
+			percentage := 100 * (n - 1 - i) / (n - i)
+			splitArgs := []string{"split-window", "-v", "-p", fmt.Sprintf("%d", percentage), "-t", fmt.Sprintf("%s.%d", windowTarget, paneTarget+i)}
 			workDir := getWorkDirForNode(&node.Rows[i+1], window, sessionWorkDir)
 			if workDir != "" {
 				splitArgs = append(splitArgs, "-c", workDir)
 			}
 			t.run(splitArgs...)
 		}
-		t.run("select-layout", "-t", windowTarget, "even-vertical")
-		
+
 		currentPane := paneTarget
 		for _, row := range node.Rows {
 			currentPane = t.applyLayout(windowTarget, currentPane, row, window, sessionWorkDir)
@@ -225,9 +226,16 @@ func getWorkDirForNode(node *LayoutNode, window *WindowConfig, sessionWorkDir st
 		if p != nil && p.WorkingDirectory != "" {
 			return p.WorkingDirectory
 		}
+		if window.WorkingDirectory != "" {
+			return window.WorkingDirectory
+		}
+		return sessionWorkDir
 	}
-	if window.WorkingDirectory != "" {
-		return window.WorkingDirectory
+	if len(node.Columns) > 0 {
+		return getWorkDirForNode(&node.Columns[0], window, sessionWorkDir)
+	}
+	if len(node.Rows) > 0 {
+		return getWorkDirForNode(&node.Rows[0], window, sessionWorkDir)
 	}
 	return sessionWorkDir
 }
@@ -238,17 +246,13 @@ func findPane(window *WindowConfig, name string) *PaneConfig {
 		if p.Name == name {
 			return p
 		}
-		// Check if name contains the pane name as a suffix
-		// Example: "example-001-window-002-row-002-pane-003" matches "example-001-window-002-pane-003"
-		if strings.Contains(name, p.Name) || strings.Contains(p.Name, name) {
-			// This is a bit too broad, but let's try suffix match of the "-pane-XXX" part
-			pSuffix := p.Name
-			if idx := strings.LastIndex(p.Name, "-pane-"); idx != -1 {
-				pSuffix = p.Name[idx:]
-			}
-			if strings.HasSuffix(name, pSuffix) {
-				return p
-			}
+		// Try suffix match of the "-pane-XXX" part
+		pSuffix := p.Name
+		if idx := strings.LastIndex(p.Name, "-pane-"); idx != -1 {
+			pSuffix = p.Name[idx:]
+		}
+		if strings.HasSuffix(name, pSuffix) {
+			return p
 		}
 	}
 	return nil
