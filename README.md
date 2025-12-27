@@ -47,6 +47,20 @@ Create a configuration file (default is `.gridlock.yaml`) and run:
 gridlock
 ```
 
+### Initialization
+
+Initialize a new configuration file:
+
+```bash
+gridlock init
+```
+
+To capture your current TMUX session into a configuration file:
+
+```bash
+gridlock init --save-current
+```
+
 ### Options
 
 - `-config, -f`: Path to the configuration file (default: `.gridlock.yaml`)
