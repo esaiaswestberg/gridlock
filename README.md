@@ -22,6 +22,17 @@ curl -sSL https://raw.githubusercontent.com/esaiaswestberg/gridlock/main/install
 irm https://raw.githubusercontent.com/esaiaswestberg/gridlock/main/install.ps1 | iex
 ```
 
+### Arch Linux (AUR)
+```bash
+# Using an AUR helper like yay
+yay -S gridlock-bin
+
+# Or manually
+git clone https://aur.archlinux.org/gridlock-bin.git
+cd gridlock-bin
+makepkg -si
+```
+
 ## Manual Installation
 
 You can download the pre-built binaries for your platform from the [Releases](https://github.com/esaiaswestberg/gridlock/releases) page.
