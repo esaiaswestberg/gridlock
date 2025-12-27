@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -17,27 +18,27 @@ type Config struct {
 
 type SessionConfig struct {
 	Name             string         `yaml:"name"`
-	WorkingDirectory string         `yaml:"working-directory"`
-	Windows          []WindowConfig `yaml:"windows"`
+	WorkingDirectory string         `yaml:"working-directory,omitempty"`
+	Windows          []WindowConfig `yaml:"windows,omitempty"`
 }
 
 type WindowConfig struct {
 	Name             string       `yaml:"name"`
-	WorkingDirectory string       `yaml:"working-directory"`
-	Panes            []PaneConfig `yaml:"panes"`
-	Layout           LayoutNode   `yaml:"layout"`
+	WorkingDirectory string       `yaml:"working-directory,omitempty"`
+	Panes            []PaneConfig `yaml:"panes,omitempty"`
+	Layout           LayoutNode   `yaml:"layout,omitempty"`
 }
 
 type PaneConfig struct {
 	Name             string `yaml:"name"`
-	WorkingDirectory string `yaml:"working-directory"`
-	Command          string `yaml:"command"`
+	WorkingDirectory string `yaml:"working-directory,omitempty"`
+	Command          string `yaml:"command,omitempty"`
 }
 
 type LayoutNode struct {
-	PaneName string
-	Columns  []LayoutNode
-	Rows     []LayoutNode
+	PaneName string       `yaml:"pane,omitempty"`
+	Columns  []LayoutNode `yaml:"columns,omitempty"`
+	Rows     []LayoutNode `yaml:"rows,omitempty"`
 }
 
 func (n *LayoutNode) UnmarshalYAML(value *yaml.Node) error {
@@ -55,6 +56,20 @@ func (n *LayoutNode) UnmarshalYAML(value *yaml.Node) error {
 		n.Rows = rows
 	}
 	return nil
+}
+
+func (n LayoutNode) MarshalYAML() (interface{}, error) {
+	if n.PaneName != "" {
+		return n.PaneName, nil
+	}
+	m := make(map[string][]LayoutNode)
+	if len(n.Columns) > 0 {
+		m["columns"] = n.Columns
+	}
+	if len(n.Rows) > 0 {
+		m["rows"] = n.Rows
+	}
+	return m, nil
 }
 
 type TMUX struct {
@@ -82,6 +97,54 @@ func main() {
 	recreate := flag.Bool("recreate", false, "Kill existing session with the same name")
 	dryRun := flag.Bool("dry-run", false, "Print commands without executing them")
 	flag.Parse()
+
+	if flag.Arg(0) == "init" {
+		wd, err := os.Getwd()
+		if err != nil {
+			log.Fatalf("failed to get working directory: %v", err)
+		}
+		sessionName := filepath.Base(wd)
+		config := Config{
+			Session: SessionConfig{
+				Name: sessionName,
+				Windows: []WindowConfig{
+					{
+						Name: "main",
+						Panes: []PaneConfig{
+							{
+								Name:    "bash",
+								Command: "echo Gridlock",
+							},
+						},
+						Layout: LayoutNode{
+							Columns: []LayoutNode{
+								{PaneName: "bash"},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		var buf strings.Builder
+		enc := yaml.NewEncoder(&buf)
+		enc.SetIndent(2)
+		if err := enc.Encode(&config); err != nil {
+			log.Fatalf("failed to marshal yaml: %v", err)
+		}
+		data := []byte(buf.String())
+
+		if _, err := os.Stat(".gridlock.yaml"); err == nil {
+			log.Fatalf(".gridlock.yaml already exists")
+		}
+
+		if err := os.WriteFile(".gridlock.yaml", data, 0644); err != nil {
+			log.Fatalf("failed to write config: %v", err)
+		}
+
+		fmt.Printf("Initialized .gridlock.yaml with session name: %s\n", sessionName)
+		return
+	}
 
 	// Handle shorthands manually because flag package is limited
 	for i, arg := range os.Args {

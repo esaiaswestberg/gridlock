@@ -1,0 +1,10 @@
+session:
+  name: gridlock
+  windows:
+    - name: main
+      panes:
+        - name: main
+          command: echo Gridlock
+      layout:
+        columns:
+          - main
