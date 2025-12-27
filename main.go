@@ -185,7 +185,7 @@ func main() {
 		fmt.Printf("Creating session: %s\n", sessionName)
 		newSessionArgs := []string{"new-session", "-d", "-s", sessionName}
 		if config.Session.WorkingDirectory != "" {
-			newSessionArgs = append(newSessionArgs, "-c", config.Session.WorkingDirectory)
+			newSessionArgs = append(newSessionArgs, "-c", expandPath(config.Session.WorkingDirectory))
 		}
 		if len(config.Session.Windows) > 0 {
 			newSessionArgs = append(newSessionArgs, "-n", config.Session.Windows[0].Name)
@@ -197,9 +197,9 @@ func main() {
 			if i > 0 {
 				windowArgs := []string{"new-window", "-d", "-t", sessionName, "-n", window.Name}
 				if window.WorkingDirectory != "" {
-					windowArgs = append(windowArgs, "-c", window.WorkingDirectory)
+					windowArgs = append(windowArgs, "-c", expandPath(window.WorkingDirectory))
 				} else if config.Session.WorkingDirectory != "" {
-					windowArgs = append(windowArgs, "-c", config.Session.WorkingDirectory)
+					windowArgs = append(windowArgs, "-c", expandPath(config.Session.WorkingDirectory))
 				}
 				t.run(windowArgs...)
 			}
@@ -287,12 +287,12 @@ func getWorkDirForNode(node *LayoutNode, window *WindowConfig, sessionWorkDir st
 	if node.PaneName != "" {
 		p := findPane(window, node.PaneName)
 		if p != nil && p.WorkingDirectory != "" {
-			return p.WorkingDirectory
+			return expandPath(p.WorkingDirectory)
 		}
 		if window.WorkingDirectory != "" {
-			return window.WorkingDirectory
+			return expandPath(window.WorkingDirectory)
 		}
-		return sessionWorkDir
+		return expandPath(sessionWorkDir)
 	}
 	if len(node.Columns) > 0 {
 		return getWorkDirForNode(&node.Columns[0], window, sessionWorkDir)
@@ -300,7 +300,21 @@ func getWorkDirForNode(node *LayoutNode, window *WindowConfig, sessionWorkDir st
 	if len(node.Rows) > 0 {
 		return getWorkDirForNode(&node.Rows[0], window, sessionWorkDir)
 	}
-	return sessionWorkDir
+	return expandPath(sessionWorkDir)
+}
+
+func expandPath(path string) string {
+	if strings.HasPrefix(path, "~/") || path == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path
+		}
+		if path == "~" {
+			return home
+		}
+		return filepath.Join(home, path[2:])
+	}
+	return path
 }
 
 func findPane(window *WindowConfig, name string) *PaneConfig {
