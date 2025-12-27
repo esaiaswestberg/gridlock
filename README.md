@@ -24,13 +24,9 @@ irm https://raw.githubusercontent.com/esaiaswestberg/gridlock/main/install.ps1 |
 
 ### Arch Linux (AUR)
 ```bash
-# Using an AUR helper like yay
-yay -S gridlock-bin
-
-# Or manually
-git clone https://aur.archlinux.org/gridlock-bin.git
-cd gridlock-bin
-makepkg -si
+# Using an AUR helper
+yay -S gridlock
+paru -S gridlock
 ```
 
 ## Manual Installation
