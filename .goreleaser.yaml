@@ -14,8 +14,8 @@ builds:
       - "386"
       - arm
     goarm:
-      - 6
-      - 7
+      - "6"
+      - "7"
     ignore:
       - goos: windows
         goarch: arm
