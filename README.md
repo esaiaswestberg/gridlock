@@ -10,7 +10,19 @@ Gridlock is a powerful TMUX session manager and automator that allows you to def
 - **Working Directory Management**: Set working directories at the session, window, or individual pane level.
 - **Smart Attachment**: Attach to new sessions, switch from within existing TMUX sessions, or create them in detached mode.
 
-## Installation
+You can install Gridlock instantly using the following commands:
+
+### Linux & macOS
+```bash
+curl -sSL https://raw.githubusercontent.com/esaiaswestberg/gridlock/main/install.sh | bash
+```
+
+### Windows (PowerShell)
+```powershell
+irm https://raw.githubusercontent.com/esaiaswestberg/gridlock/main/install.ps1 | iex
+```
+
+## Manual Installation
 
 You can download the pre-built binaries for your platform from the [Releases](https://github.com/esaiaswestberg/gridlock/releases) page.
 
