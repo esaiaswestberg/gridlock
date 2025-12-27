@@ -30,9 +30,10 @@ type WindowConfig struct {
 }
 
 type PaneConfig struct {
-	Name             string `yaml:"name"`
-	WorkingDirectory string `yaml:"working-directory,omitempty"`
-	Command          string `yaml:"command,omitempty"`
+	Name             string   `yaml:"name"`
+	WorkingDirectory string   `yaml:"working-directory,omitempty"`
+	Command          string   `yaml:"command,omitempty"`
+	Commands         []string `yaml:"commands,omitempty"`
 }
 
 type LayoutNode struct {
@@ -240,6 +241,11 @@ func (t *TMUX) applyLayout(windowTarget string, paneTarget int, node LayoutNode,
 		if paneConfig != nil {
 			if paneConfig.Command != "" {
 				t.run("send-keys", "-t", fmt.Sprintf("%s.%d", windowTarget, paneTarget), paneConfig.Command, "C-m")
+			}
+			if len(paneConfig.Commands) > 0 {
+				for _, cmd := range paneConfig.Commands {
+					t.run("send-keys", "-t", fmt.Sprintf("%s.%d", windowTarget, paneTarget), cmd, "C-m")
+				}
 			}
 		}
 		return paneTarget + 1

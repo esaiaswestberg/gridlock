@@ -69,7 +69,9 @@ session:
         - name: "editor"
           command: "nvim"
         - name: "server"
-          command: "npm run dev"
+          commands:
+             - "echo 'Starting server...'"
+             - "npm run dev"
       layout:
         columns:
           - "editor"

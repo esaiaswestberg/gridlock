@@ -13,7 +13,9 @@ session:
           working-directory: "/home/example/gridlock/backend" # Working directory for the pane (optional)
           command: "echo example-001-window-001-pane-001"
         - name: "example-001-window-001-pane-002"
-          command: "echo example-001-window-001-pane-002"
+          commands:
+            - "echo 'First command'"
+            - "echo 'Second command'"
         - name: "example-001-window-001-pane-003"
           command: "echo example-001-window-001-pane-003"
 
