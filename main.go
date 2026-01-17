@@ -97,6 +97,8 @@ func main() {
 	flag.String("f", ".gridlock.yaml", "Path to the configuration file (shorthand)")
 	detached := flag.Bool("detached", false, "Do not attach to the session")
 	flag.Bool("d", false, "Do not attach to the session (shorthand)")
+	current := flag.Bool("current", false, "Create windows in the current TMUX session")
+	flag.Bool("c", false, "Create windows in the current TMUX session (shorthand)")
 	recreate := flag.Bool("recreate", false, "Kill existing session with the same name")
 	dryRun := flag.Bool("dry-run", false, "Print commands without executing them")
 	flag.Parse()
@@ -185,6 +187,9 @@ func main() {
 		if arg == "-d" {
 			*detached = true
 		}
+		if arg == "-c" {
+			*current = true
+		}
 	}
 
 	data, err := os.ReadFile(*configFile)
@@ -200,46 +205,169 @@ func main() {
 	t := &TMUX{dryRun: *dryRun}
 	sessionName := config.Session.Name
 
+	useCurrent := *current
+	if useCurrent {
+		out, err := t.run("display-message", "-p", "#S")
+		if err != nil {
+			log.Fatalf("Failed to get current session: %v. Are you inside or attached to a TMUX session?", err)
+		}
+		sessionName = strings.TrimSpace(out)
+	}
+
 	sessionExists := false
-	_, err = t.run("has-session", "-t", sessionName)
-	if err == nil && !*dryRun {
-		if *recreate {
-			fmt.Printf("Killing existing session: %s\n", sessionName)
-			t.run("kill-session", "-t", sessionName)
-		} else {
-			sessionExists = true
+	if !useCurrent {
+		_, err = t.run("has-session", "-t", sessionName)
+		if err == nil && !*dryRun {
+			if *recreate {
+				fmt.Printf("Killing existing session: %s\n", sessionName)
+				t.run("kill-session", "-t", sessionName)
+			} else {
+				sessionExists = true
+			}
 		}
 	}
 
-	if !sessionExists {
-		// 1. We always create the session in the background.
-		fmt.Printf("Creating session: %s\n", sessionName)
-		newSessionArgs := []string{"new-session", "-d", "-s", sessionName}
-		if config.Session.WorkingDirectory != "" {
-			newSessionArgs = append(newSessionArgs, "-c", expandPath(config.Session.WorkingDirectory))
-		}
-		if len(config.Session.Windows) > 0 {
-			newSessionArgs = append(newSessionArgs, "-n", config.Session.Windows[0].Name)
-		}
-		t.run(newSessionArgs...)
+		if !sessionExists || useCurrent {
 
-		for i := range config.Session.Windows {
-			window := &config.Session.Windows[i]
-			if i > 0 {
-				windowArgs := []string{"new-window", "-d", "-t", sessionName, "-n", window.Name}
-				if window.WorkingDirectory != "" {
-					windowArgs = append(windowArgs, "-c", expandPath(window.WorkingDirectory))
-				} else if config.Session.WorkingDirectory != "" {
-					windowArgs = append(windowArgs, "-c", expandPath(config.Session.WorkingDirectory))
+			if !useCurrent {
+
+				// 1. We always create the session in the background.
+
+				fmt.Printf("Creating session: %s\n", sessionName)
+
+				newSessionArgs := []string{"new-session", "-d", "-s", sessionName}
+
+				if config.Session.WorkingDirectory != "" {
+
+					newSessionArgs = append(newSessionArgs, "-c", expandPath(config.Session.WorkingDirectory))
+
 				}
-				t.run(windowArgs...)
+
+				if len(config.Session.Windows) > 0 {
+
+					newSessionArgs = append(newSessionArgs, "-n", config.Session.Windows[0].Name)
+
+				}
+
+				if _, err := t.run(newSessionArgs...); err != nil {
+
+					log.Fatalf("Failed to create session: %v", err)
+
+				}
+
+	
+
+				for i := range config.Session.Windows {
+
+					window := &config.Session.Windows[i]
+
+					uniqueName := window.Name
+
+					if i > 0 {
+
+											uniqueName = t.getUniqueWindowName(sessionName, window.Name)
+
+											fmt.Printf("Creating window: %s\n", uniqueName)
+
+											windowArgs := []string{"new-window", "-d", "-t", sessionName + ":", "-n", uniqueName}
+
+											if window.WorkingDirectory != "" {
+
+												windowArgs = append(windowArgs, "-c", expandPath(window.WorkingDirectory))
+
+											} else if config.Session.WorkingDirectory != "" {
+
+												windowArgs = append(windowArgs, "-c", expandPath(config.Session.WorkingDirectory))
+
+											}
+
+											if _, err := t.run(windowArgs...); err != nil {
+
+												log.Printf("Warning: failed to create window %s: %v", uniqueName, err)
+
+												continue
+
+											}
+
+										}
+
+						
+
+										windowTarget := fmt.Sprintf("%s:%s", sessionName, uniqueName)
+
+										// Apply layout recursively
+
+										t.applyLayout(windowTarget, 0, window.Layout, window, config.Session.WorkingDirectory)
+
+									}
+
+								} else {
+
+									// useCurrent: create all windows in the current session
+
+									fmt.Printf("Adding windows to current session: %s\n", sessionName)
+
+									var firstWindowName string
+
+									for i := range config.Session.Windows {
+
+										window := &config.Session.Windows[i]
+
+										uniqueName := t.getUniqueWindowName(sessionName, window.Name)
+
+										fmt.Printf("Creating window: %s\n", uniqueName)
+
+										if i == 0 {
+
+											firstWindowName = uniqueName
+
+										}
+
+										windowArgs := []string{"new-window", "-d", "-t", sessionName + ":", "-n", uniqueName}
+
+										if window.WorkingDirectory != "" {
+
+											windowArgs = append(windowArgs, "-c", expandPath(window.WorkingDirectory))
+
+										} else if config.Session.WorkingDirectory != "" {
+
+											windowArgs = append(windowArgs, "-c", expandPath(config.Session.WorkingDirectory))
+
+										}
+
+										if _, err := t.run(windowArgs...); err != nil {
+
+											log.Printf("Error: failed to create window %s: %v", uniqueName, err)
+
+											continue
+
+										}
+
+	
+
+					windowTarget := fmt.Sprintf("%s:%s", sessionName, uniqueName)
+
+					// Apply layout recursively
+
+					t.applyLayout(windowTarget, 0, window.Layout, window, config.Session.WorkingDirectory)
+
+				}
+
+	
+
+				// Switch to the first window if not detached
+
+				if !*detached && firstWindowName != "" {
+
+					fmt.Printf("Switching to window: %s\n", firstWindowName)
+
+					t.run("select-window", "-t", fmt.Sprintf("%s:%s", sessionName, firstWindowName))
+
+				}
+
 			}
 
-			windowTarget := fmt.Sprintf("%s:%s", sessionName, window.Name)
-			// Apply layout recursively
-			t.applyLayout(windowTarget, 0, window.Layout, window, config.Session.WorkingDirectory)
 		}
-	}
 
 	// 4. If we are currently in a TMUX session, we detach from the current one and attach to the new one, unless created detached.
 	if !*detached {
@@ -369,6 +497,35 @@ func findPane(window *WindowConfig, name string) *PaneConfig {
 		}
 	}
 	return nil
+}
+
+func (t *TMUX) getUniqueWindowName(sessionName string, baseName string) string {
+	out, err := t.run("list-windows", "-t", sessionName, "-F", "#{window_name}")
+	if err != nil {
+		// If session is new or list-windows fails, assume baseName is okay
+		return baseName
+	}
+
+	existing := make(map[string]bool)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	for _, name := range lines {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			existing[name] = true
+		}
+	}
+
+	if !existing[baseName] {
+		return baseName
+	}
+
+	for i := 1; i < 100; i++ {
+		newName := fmt.Sprintf("%s-%02d", baseName, i)
+		if !existing[newName] {
+			return newName
+		}
+	}
+	return baseName
 }
 
 func captureCurrentSession(sessionName string) (*Config, error) {
