@@ -63,11 +63,11 @@ gridlock init --save-current
 
 ### Options
 
-- `-config, -f`: Path to the configuration file (default: `.gridlock.yaml`)
-- `-detached, -d`: Create the session without attaching to it.
-- `-current, -c`: Create windows from the configuration in the current TMUX session instead of a new one.
-- `-recreate`: Recreate the session. If run from within the target session, it cleans and rebuilds it without exiting.
-- `-dry-run`: Print the TMUX commands that would be executed without running them.
+- `--config, -f`: Path to the configuration file (default: `.gridlock.yaml`)
+- `--detached, -d`: Create the session without attaching to it.
+- `--current, -c`: Create windows from the configuration in the current TMUX session instead of a new one.
+- `--recreate`: Recreate the session. If run from within the target session, it cleans and rebuilds it without exiting.
+- `--dry-run`: Print the TMUX commands that would be executed without running them.
 
 ## Configuration
 

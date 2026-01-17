@@ -93,13 +93,21 @@ func (t *TMUX) run(args ...string) (string, error) {
 }
 
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  --config, -f string\n        Path to the configuration file (default \".gridlock.yaml\")\n")
+		fmt.Fprintf(os.Stderr, "  --detached, -d\n        Do not attach to the session\n")
+		fmt.Fprintf(os.Stderr, "  --current, -c\n        Create windows from the configuration in the current TMUX session instead of a new one\n")
+		fmt.Fprintf(os.Stderr, "  --recreate\n        Recreate the session. If run from within the target session, it cleans and rebuilds it without exiting\n")
+		fmt.Fprintf(os.Stderr, "  --dry-run\n        Print commands without executing them\n")
+	}
 	configFile := flag.String("config", ".gridlock.yaml", "Path to the configuration file")
 	flag.String("f", ".gridlock.yaml", "Path to the configuration file (shorthand)")
 	detached := flag.Bool("detached", false, "Do not attach to the session")
 	flag.Bool("d", false, "Do not attach to the session (shorthand)")
-	current := flag.Bool("current", false, "Create windows in the current TMUX session")
+	current := flag.Bool("current", false, "Create windows from the configuration in the current TMUX session instead of a new one")
 	flag.Bool("c", false, "Create windows in the current TMUX session (shorthand)")
-	recreate := flag.Bool("recreate", false, "Kill existing session with the same name")
+	recreate := flag.Bool("recreate", false, "Recreate the session. If run from within the target session, it cleans and rebuilds it without exiting")
 	dryRun := flag.Bool("dry-run", false, "Print commands without executing them")
 	flag.Parse()
 
