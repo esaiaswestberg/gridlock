@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -77,12 +78,35 @@ func (n LayoutNode) MarshalYAML() (interface{}, error) {
 
 type TMUX struct {
 	dryRun bool
+
+	// out receives the command trace printed in dry-run mode. Defaults to os.Stdout.
+	out io.Writer
+
+	// runner, when set, replaces the actual tmux invocation. Used by tests.
+	runner func(args []string) (string, error)
+
+	// dryRunPanes counts the synthetic pane IDs handed out in dry-run mode.
+	dryRunPanes int
+
+	// legacySize is set once tmux is found to reject "-l <percentage>%" and to
+	// require the deprecated "-p <percentage>" instead.
+	legacySize bool
+}
+
+func (t *TMUX) writer() io.Writer {
+	if t.out != nil {
+		return t.out
+	}
+	return os.Stdout
 }
 
 func (t *TMUX) run(args ...string) (string, error) {
 	if t.dryRun {
-		fmt.Printf("tmux %s\n", strings.Join(args, " "))
+		fmt.Fprintf(t.writer(), "tmux %s\n", strings.Join(args, " "))
 		return "", nil
+	}
+	if t.runner != nil {
+		return t.runner(args)
 	}
 	cmd := exec.Command("tmux", args...)
 	out, err := cmd.CombinedOutput()
@@ -90,6 +114,84 @@ func (t *TMUX) run(args ...string) (string, error) {
 		return string(out), fmt.Errorf("tmux %s failed: %v\nOutput: %s", strings.Join(args, " "), err, string(out))
 	}
 	return string(out), nil
+}
+
+// nextDryRunPaneID produces a placeholder pane ID for dry-run mode, where tmux
+// never actually runs and therefore never reports real pane IDs.
+func (t *TMUX) nextDryRunPaneID() string {
+	id := fmt.Sprintf("%%dry%d", t.dryRunPanes)
+	t.dryRunPanes++
+	return id
+}
+
+// firstPaneID returns the stable tmux pane ID (#{pane_id}) of the first pane of
+// a window. This is the anchor every layout is built from.
+func (t *TMUX) firstPaneID(windowTarget string) (string, error) {
+	out, err := t.run("list-panes", "-t", windowTarget, "-F", "#{pane_id}")
+	if err != nil {
+		return "", fmt.Errorf("window %s: failed to list panes: %w", windowTarget, err)
+	}
+	if id := firstLine(out); id != "" {
+		return id, nil
+	}
+	if t.dryRun {
+		return t.nextDryRunPaneID(), nil
+	}
+	return "", fmt.Errorf("window %s: list-panes returned no pane id", windowTarget)
+}
+
+func splitArgs(direction string, percentage int, target, workDir string, legacySize bool) []string {
+	size := []string{"-l", fmt.Sprintf("%d%%", percentage)}
+	if legacySize {
+		size = []string{"-p", strconv.Itoa(percentage)}
+	}
+	args := append([]string{"split-window", direction}, size...)
+	args = append(args, "-t", target, "-P", "-F", "#{pane_id}")
+	if workDir != "" {
+		args = append(args, "-c", workDir)
+	}
+	return args
+}
+
+// splitPane splits target and returns the stable pane ID of the newly created
+// pane, as reported by tmux itself.
+func (t *TMUX) splitPane(direction string, percentage int, target, workDir, windowTarget, nodePath string) (string, error) {
+	out, err := t.run(splitArgs(direction, percentage, target, workDir, t.legacySize)...)
+	if err != nil && !t.legacySize {
+		// tmux before 3.1 does not accept a percentage for -l and needs the
+		// deprecated -p flag instead. Retry once and remember the answer.
+		if legacyOut, legacyErr := t.run(splitArgs(direction, percentage, target, workDir, true)...); legacyErr == nil {
+			t.legacySize = true
+			out, err = legacyOut, nil
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("window %s: %s: failed to split pane %s: %w", windowTarget, nodePath, target, err)
+	}
+	if id := firstLine(out); id != "" {
+		return id, nil
+	}
+	if t.dryRun {
+		return t.nextDryRunPaneID(), nil
+	}
+	return "", fmt.Errorf("window %s: %s: split-window on %s returned no pane id", windowTarget, nodePath, target)
+}
+
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func parseConfig(data []byte) (*Config, error) {
+	var config Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+	return &config, nil
 }
 
 func main() {
@@ -120,7 +222,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("failed to get working directory: %v", err)
 		}
-		
+
 		var config *Config
 		var sessionName string
 
@@ -128,14 +230,14 @@ func main() {
 			// Check if we are in tmux or have a session attached
 			// We can try to guess the session name from TMUX env var if set, or just capture the attached session.
 			// Actually, if we run `tmux display-message -p '#S'`, it returns the current session if attached/inside.
-			
+
 			t := &TMUX{dryRun: false}
 			out, err := t.run("display-message", "-p", "#S")
 			if err != nil {
 				log.Fatalf("Failed to get current session: %v. Are you inside or attached to a TMUX session?", err)
 			}
 			currentSession := strings.TrimSpace(out)
-			
+
 			fmt.Printf("Capturing session: %s\n", currentSession)
 			config, err = captureCurrentSession(currentSession)
 			if err != nil {
@@ -205,10 +307,11 @@ func main() {
 		log.Fatalf("failed to read config: %v", err)
 	}
 
-	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	cfg, err := parseConfig(data)
+	if err != nil {
 		log.Fatalf("failed to parse yaml: %v", err)
 	}
+	config := *cfg
 
 	t := &TMUX{dryRun: *dryRun}
 	sessionName := config.Session.Name
@@ -229,6 +332,10 @@ func main() {
 		}
 		sessionName = currentSession
 	}
+
+	// layoutErrors collects every failure that happened while building windows and
+	// panes, so a partially created session is never reported as a success.
+	var layoutErrors []error
 
 	sessionExists := false
 	survivorWindowID := ""
@@ -286,7 +393,9 @@ func main() {
 					windowArgs = append(windowArgs, "-c", expandPath(config.Session.WorkingDirectory))
 				}
 				if _, err := t.run(windowArgs...); err != nil {
-					log.Printf("Warning: failed to create window %s: %v", uniqueName, err)
+					err = fmt.Errorf("failed to create window %s: %w", uniqueName, err)
+					log.Printf("Error: %v", err)
+					layoutErrors = append(layoutErrors, err)
 					continue
 				}
 			}
@@ -295,8 +404,11 @@ func main() {
 			}
 
 			windowTarget := fmt.Sprintf("%s:%s", sessionName, uniqueName)
-			// Apply layout recursively
-			t.applyLayout(windowTarget, 0, window.Layout, window, config.Session.WorkingDirectory)
+			// Apply layout recursively, driven by real tmux pane IDs.
+			if err := t.applyLayout(windowTarget, window.Layout, window, config.Session.WorkingDirectory); err != nil {
+				log.Printf("Error: %v", err)
+				layoutErrors = append(layoutErrors, err)
+			}
 		}
 
 		// Switch to the first window if not detached
@@ -307,6 +419,13 @@ func main() {
 
 		if survivorWindowID != "" {
 			t.run("kill-window", "-t", survivorWindowID)
+		}
+	}
+
+	if len(layoutErrors) > 0 {
+		fmt.Fprintf(os.Stderr, "\nGridlock finished with %d error(s); the session may be incomplete:\n", len(layoutErrors))
+		for _, err := range layoutErrors {
+			fmt.Fprintf(os.Stderr, "  - %v\n", err)
 		}
 	}
 
@@ -333,6 +452,10 @@ func main() {
 			}
 		}
 	}
+
+	if len(layoutErrors) > 0 {
+		os.Exit(1)
+	}
 }
 
 func cleanSession(t *TMUX) string {
@@ -352,59 +475,87 @@ func cleanSession(t *TMUX) string {
 	return currentWindowID
 }
 
+// applyLayout builds the pane layout of a window. It resolves the window's
+// initial pane ID from tmux and then drives every split from stable pane IDs
+// (#{pane_id}) reported by tmux, never from predicted numeric pane indexes.
+func (t *TMUX) applyLayout(windowTarget string, node LayoutNode, window *WindowConfig, sessionWorkDir string) error {
+	rootPane, err := t.firstPaneID(windowTarget)
+	if err != nil {
+		return err
+	}
+	return t.buildLayout(windowTarget, rootPane, node, window, sessionWorkDir, "layout")
+}
 
-func (t *TMUX) applyLayout(windowTarget string, paneTarget int, node LayoutNode, window *WindowConfig, sessionWorkDir string) int {
+// buildLayout splits paneID according to node and recurses into the children.
+// nodePath is a human readable location of node inside the window's layout,
+// used to make errors identifiable.
+func (t *TMUX) buildLayout(windowTarget, paneID string, node LayoutNode, window *WindowConfig, sessionWorkDir, nodePath string) error {
 	if node.PaneName != "" {
-		paneConfig := findPane(window, node.PaneName)
-		if paneConfig != nil {
-			if paneConfig.Command != "" {
-				t.run("send-keys", "-t", fmt.Sprintf("%s.%d", windowTarget, paneTarget), paneConfig.Command, "C-m")
-			}
-			if len(paneConfig.Commands) > 0 {
-				for _, cmd := range paneConfig.Commands {
-					t.run("send-keys", "-t", fmt.Sprintf("%s.%d", windowTarget, paneTarget), cmd, "C-m")
-				}
-			}
-		}
-		return paneTarget + 1
+		return t.sendPaneCommands(windowTarget, paneID, node.PaneName, window, nodePath)
 	}
 
+	// Columns take precedence over rows when both are present, as before.
+	children := node.Rows
+	direction := "-v"
+	kind := "rows"
 	if len(node.Columns) > 0 {
-		n := len(node.Columns)
-		for i := 0; i < n-1; i++ {
-			percentage := 100 * (n - 1 - i) / (n - i)
-			splitArgs := []string{"split-window", "-h", "-p", fmt.Sprintf("%d", percentage), "-t", fmt.Sprintf("%s.%d", windowTarget, paneTarget+i)}
-			workDir := getWorkDirForNode(&node.Columns[i+1], window, sessionWorkDir)
-			if workDir != "" {
-				splitArgs = append(splitArgs, "-c", workDir)
-			}
-			t.run(splitArgs...)
-		}
-
-		currentPane := paneTarget
-		for _, col := range node.Columns {
-			currentPane = t.applyLayout(windowTarget, currentPane, col, window, sessionWorkDir)
-		}
-		return currentPane
-	} else if len(node.Rows) > 0 {
-		n := len(node.Rows)
-		for i := 0; i < n-1; i++ {
-			percentage := 100 * (n - 1 - i) / (n - i)
-			splitArgs := []string{"split-window", "-v", "-p", fmt.Sprintf("%d", percentage), "-t", fmt.Sprintf("%s.%d", windowTarget, paneTarget+i)}
-			workDir := getWorkDirForNode(&node.Rows[i+1], window, sessionWorkDir)
-			if workDir != "" {
-				splitArgs = append(splitArgs, "-c", workDir)
-			}
-			t.run(splitArgs...)
-		}
-
-		currentPane := paneTarget
-		for _, row := range node.Rows {
-			currentPane = t.applyLayout(windowTarget, currentPane, row, window, sessionWorkDir)
-		}
-		return currentPane
+		children = node.Columns
+		direction = "-h"
+		kind = "columns"
 	}
-	return paneTarget + 1
+	if len(children) == 0 {
+		return nil
+	}
+
+	// The node's own pane becomes the first child; every further child is a new
+	// pane created by splitting the most recently created one. The shrinking
+	// percentages keep the resulting panes approximately equal in size.
+	n := len(children)
+	paneIDs := make([]string, n)
+	paneIDs[0] = paneID
+	current := paneID
+	for i := 0; i < n-1; i++ {
+		percentage := 100 * (n - 1 - i) / (n - i)
+		workDir := getWorkDirForNode(&children[i+1], window, sessionWorkDir)
+		childPath := fmt.Sprintf("%s.%s[%d]", nodePath, kind, i+1)
+		newPane, err := t.splitPane(direction, percentage, current, workDir, windowTarget, childPath)
+		if err != nil {
+			return err
+		}
+		paneIDs[i+1] = newPane
+		current = newPane
+	}
+
+	for i := range children {
+		childPath := fmt.Sprintf("%s.%s[%d]", nodePath, kind, i)
+		if err := t.buildLayout(windowTarget, paneIDs[i], children[i], window, sessionWorkDir, childPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sendPaneCommands dispatches a leaf's configured commands to the real pane ID
+// that ended up representing it.
+func (t *TMUX) sendPaneCommands(windowTarget, paneID, paneName string, window *WindowConfig, nodePath string) error {
+	paneConfig := findPane(window, paneName)
+	if paneConfig == nil {
+		return nil
+	}
+
+	commands := make([]string, 0, len(paneConfig.Commands)+1)
+	if paneConfig.Command != "" {
+		commands = append(commands, paneConfig.Command)
+	}
+	commands = append(commands, paneConfig.Commands...)
+
+	for _, command := range commands {
+		if _, err := t.run("send-keys", "-t", paneID, command, "C-m"); err != nil {
+			return fmt.Errorf("window %s: %s: pane %q (tmux target %s): failed to send command %q: %w",
+				windowTarget, nodePath, paneName, paneID, command, err)
+		}
+	}
+	return nil
 }
 
 func getWorkDirForNode(node *LayoutNode, window *WindowConfig, sessionWorkDir string) string {
@@ -506,7 +657,7 @@ func captureCurrentSession(sessionName string) (*Config, error) {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	var windows []WindowConfig
 
-	// Get Session CWD (from first pane of first window usually, or just assume user home for now, 
+	// Get Session CWD (from first pane of first window usually, or just assume user home for now,
 	// but let's try to infer from common prefix later? No, let's just leave it empty and set per-window/pane)
 	// Actually, tmux has a session working directory but it's not easily exposed unless we look at the session creation time or just ignore it.
 	// We will rely on window/pane working directories.
@@ -541,7 +692,7 @@ func captureCurrentSession(sessionName string) (*Config, error) {
 
 			// Generate a name
 			pName := fmt.Sprintf("%s-pane-%d", winName, i)
-			
+
 			// Try to simplify path
 			home, _ := os.UserHomeDir()
 			if strings.HasPrefix(pPath, home) {
@@ -575,9 +726,9 @@ func captureCurrentSession(sessionName string) (*Config, error) {
 		}
 
 		windows = append(windows, WindowConfig{
-			Name:    winName,
-			Panes:   panes,
-			Layout:  layoutNode,
+			Name:   winName,
+			Panes:  panes,
+			Layout: layoutNode,
 		})
 	}
 
@@ -605,13 +756,13 @@ func parseTmuxLayout(layout string, paneMap map[int]string) (LayoutNode, error) 
 	// It ends at `{`, `[`, or `,`.
 	// Actually, leaf node format: WxH,X,Y,ID
 	// Container: WxH,X,Y{...} or WxH,X,Y[...]
-	
+
 	re := regexp.MustCompile(`^\d+x\d+,\d+,\d+`)
 	loc := re.FindStringIndex(layout)
 	if loc == nil {
 		return LayoutNode{}, fmt.Errorf("invalid layout format: %s", layout)
 	}
-	
+
 	rest := layout[loc[1]:]
 	if len(rest) == 0 {
 		return LayoutNode{}, fmt.Errorf("unexpected end of layout string")
@@ -732,4 +883,3 @@ func splitLayoutChildren(s string) []string {
 	}
 	return children
 }
-
